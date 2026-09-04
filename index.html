@@ -1,0 +1,133 @@
+<script>
+  const API_URL = "http://127.0.0.1:8000/api/analyze";
+
+  document.getElementById("analyzeBtn").addEventListener("click", async () => {
+    const repoUrl = document.getElementById("repoUrl").value.trim();
+    const branch = document.getElementById("branchInput").value.trim() || "main";
+    const analyzeBtn = document.getElementById("analyzeBtn");
+    const statusText = document.getElementById("statusText");
+    const statusDot = document.getElementById("statusDot");
+
+    if (!repoUrl) {
+      alert("Please enter a repository URL.");
+      return;
+    }
+
+    // Update UI State to Running
+    analyzeBtn.disabled = true;
+    statusText.innerText = "RUNNING";
+    statusText.className = "text-[#A78BFA] mono";
+    statusDot.className = "w-2 h-2 rounded-full bg-[#7C5CFF] animate-ping";
+
+    try {
+      const response = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          repo_url: repoUrl,
+          branch: branch,
+          depth: "standard",
+          enable_security: true,
+          enable_osint: true,
+          enable_autobuild: true
+        })
+      });
+
+      if (!response.ok) throw new Error("API Execution Failed");
+      const data = await response.json();
+
+      // 1. Update Navigation & Meta Overview
+      document.getElementById("navWorkflowId").innerText = data.workflow_id;
+      document.getElementById("ovId").innerText = data.workflow_id;
+      document.getElementById("ovRepo").innerText = data.repository.name;
+      document.getElementById("ovBranch").innerText = data.repository.branch;
+      document.getElementById("ovTokens").innerText = data.stats.tokens_used;
+      document.getElementById("ovCalls").innerText = data.stats.llm_calls;
+
+      // 2. Render Severity Findings
+      const findingsList = document.getElementById("findingsList");
+      findingsList.innerHTML = "";
+      data.findings.forEach(item => {
+        const li = document.createElement("li");
+        li.className = "p-2 rounded-lg bg-[#0C1119] border border-[#202A3A] text-[11.5px]";
+        li.innerHTML = `
+          <div class="flex items-center justify-between mb-1">
+            <span class="sev sev-${item.severity}">${item.severity.toUpperCase()}</span>
+            <span class="mono text-[#64748B] text-[10px]">${item.id}</span>
+          </div>
+          <div class="font-semibold text-[#E8ECF4]">${item.title}</div>
+          <div class="mono text-[#94A3B8] text-[10.5px] mt-1">${item.file}:${item.line}</div>
+        `;
+        findingsList.appendChild(li);
+      });
+
+      // 3. Render Change Set (Side-by-Side Diff Output)
+      const csBody = document.getElementById("changeSetBody");
+      csBody.innerHTML = `
+        <div class="p-3 bg-[#0A0F18] border-b border-[#202A3A] text-[11px] mono text-[#94A3B8] flex justify-between">
+          <span>File: ${data.change_set.file_path}</span>
+          <span class="text-[#10D99E]">${data.change_set.diff_summary}</span>
+        </div>
+        <div class="grid grid-cols-2 divide-x divide-[#202A3A] p-2 bg-[#080B12] mono text-[11px] max-h-60 overflow-y-auto">
+          <div>
+            <div class="text-[#FCA5A5] font-bold px-2 py-1 text-[10px] uppercase">Original Code</div>
+            <pre class="p-2 text-[#CBD5E1]">${data.change_set.original_code}</pre>
+          </div>
+          <div>
+            <div class="text-[#86EFAC] font-bold px-2 py-1 text-[10px] uppercase">Refactored Fix</div>
+            <pre class="p-2 text-[#CBD5E1]">${data.change_set.corrected_code}</pre>
+          </div>
+        </div>
+      `;
+
+      // 4. Render Validation
+      const valBody = document.getElementById("validationBody");
+      valBody.innerHTML = data.validation.checks.map(c => `
+        <div class="vcard mb-2" data-status="${c.status}">
+          <i data-lucide="check-circle-2" class="w-4 h-4 text-[#10D99E]"></i>
+          <div class="text-[12px] font-semibold">${c.name}</div>
+        </div>
+      `).join("");
+      lucide.createIcons();
+
+      // 5. Render Final Dossier
+      const dossierBody = document.getElementById("dossierBody");
+      dossierBody.innerHTML = `
+        <div class="text-[12.5px] text-[#CBD5E1] space-y-2">
+          <p>${data.dossier.summary}</p>
+          <div class="flex gap-4 text-[11px] mono pt-2 text-[#94A3B8]">
+            <span>Model: <b class="text-[#E8ECF4]">${data.dossier.model_used}</b></span>
+            <span>Status: <b class="text-[#10D99E]">${data.dossier.remediation_status}</b></span>
+          </div>
+        </div>
+      `;
+
+      // 6. Push Live Logs
+      const logStream = document.getElementById("logStream");
+      logStream.innerHTML = "";
+      data.logs.forEach(l => {
+        const line = document.createElement("div");
+        line.className = "log-line";
+        line.innerHTML = `
+          <span class="text-[#64748B]">${l.time}</span>
+          <span class="tag bg-[#202A3A] text-[#94A3B8]">${l.tag}</span>
+          <span class="lv-${l.level}">${l.msg}</span>
+        `;
+        logStream.appendChild(line);
+      });
+
+      // Update UI State to Complete
+      statusText.innerText = "COMPLETED";
+      statusText.className = "text-[#10D99E] mono";
+      statusDot.className = "w-2 h-2 rounded-full bg-[#10D99E]";
+
+    } catch (err) {
+      statusText.innerText = "FAILED";
+      statusText.className = "text-[#EF4444] mono";
+      statusDot.className = "w-2 h-2 rounded-full bg-[#EF4444]";
+      alert("Error processing repository request: " + err.message);
+    } finally {
+      analyzeBtn.disabled = false;
+    }
+  });
+</script>
