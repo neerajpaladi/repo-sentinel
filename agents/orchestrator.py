@@ -155,3 +155,20 @@ async def run_investigation(target: str, max_depth: int = 3) -> Dict[str, Any]:
 
     result = await graph.ainvoke(initial_state)
     return result.get("final_report", {})
+# Inside orchestrator.py or your agent graph definition
+
+from agents.correction_agent import correction_agent
+
+def correction_node(state: dict) -> dict:
+    original_code = state.get("target_code", "# No code captured")
+    flaws = state.get("risk_assessment_summary", "Detected security vulnerabilities.")
+    
+    # Save the refactored code directly into correction.py
+    correction_path = correction_agent.generate_and_save_correction(
+        original_code=original_code,
+        flaws_summary=flaws,
+        output_filename="correction.py"
+    )
+    
+    state["correction_file"] = correction_path
+    return state

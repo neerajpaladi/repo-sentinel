@@ -4,9 +4,10 @@ import config
 import argparse
 import asyncio
 import sys
+
 import os
 from agents.orchestrator import run_investigation
-from compiler.pdf_builder import pdf_builder
+from agents.pdf_builder import pdf_builder
 
 
 async def main() -> None:
@@ -73,3 +74,13 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+def format_commit_log(commits: list[dict]) -> str:
+    """Formats raw commit dictionaries into clean, human-readable summaries."""
+    formatted_entries = []
+    for c in commits:
+        badge = "[SECURITY]" if c.get("is_security_relevant") else "[BUILD]"
+        sha = c.get("sha", "")[:7]
+        msg = c.get("message", "").split("\n")[0]
+        formatted_entries.append(f"{badge} {sha}: {msg}")
+
+    return "\n".join(formatted_entries)

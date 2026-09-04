@@ -61,3 +61,12 @@ class GitHubAnalyzer:
         return commits
 
 github_analyzer = GitHubAnalyzer()
+def format_commit_log(commits: list[dict]) -> str:
+    """Converts raw commit dictionaries into clean readable lines."""
+    formatted = []
+    for c in commits:
+        badge = "[SECURITY]" if c.get("is_security_relevant") else "[BUILD]"
+        sha = c.get("sha", "")[:7]
+        msg = c.get("message", "").split("\n")[0]
+        formatted.append(f"{badge} {sha}: {msg}")
+    return "\n".join(formatted)

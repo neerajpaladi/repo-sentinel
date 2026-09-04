@@ -55,3 +55,7 @@ class ThreatKnowledgeGraph:
         }
 
 knowledge_graph = ThreatKnowledgeGraph()
+# Inside orchestrator.py or your agent graph definition
+
+from agents.correction_agent import correction_agent
+
