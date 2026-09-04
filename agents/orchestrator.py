@@ -1,8 +1,13 @@
 # agents/orchestrator.py
 
+import re
 from typing import TypedDict, List, Dict, Any
 from langgraph.graph import StateGraph, END
 from agents.reasoning import evaluate_data_gaps
+from modules.cve_client import cve_client
+from modules.github_analyzer import github_analyzer
+from graph.risk_scorer import risk_scorer
+from graph.knowledge_graph import knowledge_graph
 
 
 class DossierState(TypedDict):
@@ -18,29 +23,20 @@ class DossierState(TypedDict):
 
 
 async def ingest_target_node(state: DossierState) -> Dict[str, Any]:
-    """Node 1: Fetches baseline repository metadata, commit logs, and preliminary CVEs.
-    
-    (Note: Hardcoded placeholders below will be replaced by calls to modules/ standard code).
-    """
+    """Node 1: Fetches live target repository metadata and recent commit history."""
     target = state["target"]
     
-    # Placeholder baseline data (will connect to modules/cve_client.py & modules/github_analyzer.py)
-    sample_cves = [
-        {"id": "CVE-2023-38606", "severity": "CRITICAL", "summary": "Buffer overflow in target dependency."}
-    ]
-    sample_commits = [
-        {"sha": "a1b2c3d", "message": "fix: update vulnerable parser", "author": "dev@target.com"}
-    ]
+    # Query GitHub API directly for recent commit history
+    commits = await github_analyzer.fetch_recent_commits(target)
 
     return {
-        "raw_cves": sample_cves,
-        "commits": sample_commits,
+        "commits": commits,
         "iteration": state["iteration"] + 1,
     }
 
 
 async def analyze_gaps_node(state: DossierState) -> Dict[str, Any]:
-    """Node 2: Uses Kimi 2.5 via Featherless AI to evaluate data completeness."""
+    """Node 2: Uses Kimi 2.5 via Featherless AI to evaluate state sufficiency."""
     if state["iteration"] >= state["max_iterations"]:
         return {"missing_gaps": [], "is_complete": True}
 
@@ -57,29 +53,47 @@ async def analyze_gaps_node(state: DossierState) -> Dict[str, Any]:
 
 
 async def execute_subqueries_node(state: DossierState) -> Dict[str, Any]:
-    """Node 3: Resolves gaps identified by Kimi 2.5 by executing targeted tools."""
+    """Node 3: Dynamically parses gaps identified by Kimi 2.5 and fetches live vulnerability intelligence."""
     gaps = state.get("missing_gaps", [])
-    updated_cves = list(state.get("raw_cves", []))
+    current_cves = list(state.get("raw_cves", []))
+    existing_cve_ids = {c.get("cve_id") for c in current_cves if "cve_id" in c}
+
+    # Regex pattern to match standard CVE formats (e.g., CVE-2023-38606)
+    cve_pattern = re.compile(r"CVE-\d{4}-\d{4,7}", re.IGNORECASE)
 
     for gap in gaps:
-        if "CVE" in gap:
-            for cve in updated_cves:
-                if cve["id"] in gap:
-                    cve["poc_found"] = True
-                    cve["poc_url"] = f"https://github.com/exploit-db/{cve['id']}"
+        found_cves = cve_pattern.findall(gap)
+        for cve_id in found_cves:
+            cve_id_upper = cve_id.upper()
+            if cve_id_upper not in existing_cve_ids:
+                # Fetch aggregated metrics across NVD, FIRST EPSS, and CISA KEV
+                enriched_data = await cve_client.enrich_cve(cve_id_upper)
+                current_cves.append(enriched_data)
+                existing_cve_ids.add(cve_id_upper)
 
     return {
-        "raw_cves": updated_cves,
+        "raw_cves": current_cves,
         "iteration": state["iteration"] + 1,
     }
 
 
 async def synthesize_report_node(state: DossierState) -> Dict[str, Any]:
-    """Node 4: Compiles all enriched state data into the final dossier payload."""
+    """Node 4: Evaluates risk metrics, generates knowledge graph, and outputs final dossier object."""
+    # Compute composite CVSS/EPSS/KEV threat scores
+    risk_summary = risk_scorer.evaluate_target_risk(state["raw_cves"])
+    
+    # Map entities into the directed NetworkX graph
+    graph_summary = knowledge_graph.build_graph(
+        target=state["target"],
+        commits=state["commits"],
+        cves=state["raw_cves"],
+    )
+
     report = {
         "target": state["target"],
         "iterations_completed": state["iteration"],
-        "cves_identified": state["raw_cves"],
+        "risk_assessment": risk_summary,
+        "knowledge_graph": graph_summary,
         "commits_analyzed": state["commits"],
         "status": "COMPLETE",
     }
@@ -87,7 +101,7 @@ async def synthesize_report_node(state: DossierState) -> Dict[str, Any]:
 
 
 def route_next_step(state: DossierState) -> str:
-    """Conditional edge router."""
+    """Conditional edge router determining loop continuation or completion."""
     if state["is_complete"]:
         return "synthesize_report"
     return "execute_subqueries"
@@ -103,7 +117,7 @@ def build_orchestrator() -> Any:
     workflow.add_node("execute_subqueries", execute_subqueries_node)
     workflow.add_node("synthesize_report", synthesize_report_node)
 
-    # 2. Wire Fixed Edges
+    # 2. Wire Entry Point & Fixed Edges
     workflow.set_entry_point("ingest_target")
     workflow.add_edge("ingest_target", "analyze_gaps")
 
@@ -125,7 +139,7 @@ def build_orchestrator() -> Any:
 
 
 async def run_investigation(target: str, max_depth: int = 3) -> Dict[str, Any]:
-    """Asynchronous public entry point to trigger the state machine from main.py."""
+    """Asynchronous entry point invoked by main.py to start an investigation."""
     graph = build_orchestrator()
 
     initial_state: DossierState = {
