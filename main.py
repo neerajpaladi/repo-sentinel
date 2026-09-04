@@ -1,4 +1,5 @@
 # main.py
+import config
 
 import argparse
 import asyncio
